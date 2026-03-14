@@ -8,16 +8,16 @@ import { DashboardRecent } from "./dashboard-recent";
 export default async function DashboardPage() {
   const supabase = await createClient();
 
-  // Sales - completed only for revenue
+  // Sales - completed and paid only for revenue
   const { data: sales } = await supabase
     .from("sales")
-    .select("total_amount, sale_date, completed_at")
+    .select("total_amount, withholding_amount, sale_date, completed_at, is_paid")
     .order("sale_date", { ascending: false });
 
-  // Restocks
+  // Restocks - use net amount (total - withholding) for costs when total >= 20,000
   const { data: restocks } = await supabase
     .from("restocks")
-    .select("quantity, unit_price, restock_date, is_paid")
+    .select("quantity, unit_price, withholding_amount, restock_date, is_paid")
     .eq("is_paid", true);
 
   const { data: costs } = await supabase
@@ -40,17 +40,33 @@ export default async function DashboardPage() {
     .eq("is_paid", false)
     .not("credit_due_date", "is", null);
 
-  const completedSales = (sales || []).filter((s) => s.completed_at);
-  const revenue = completedSales.reduce((sum, s) => sum + Number(s.total_amount || 0), 0);
+  const completedSales = (sales || []).filter(
+    (s) => s.completed_at && s.is_paid
+  );
+  const getNetAmount = (s: { total_amount?: number | null; withholding_amount?: number | null }) => {
+    const total = Number(s.total_amount || 0);
+    const withholding = Number(s.withholding_amount || 0);
+    return total - withholding;
+  };
+  const revenue = completedSales.reduce((sum, s) => sum + getNetAmount(s), 0);
+  const getRestockNetAmount = (r: { quantity?: number; unit_price?: number; withholding_amount?: number | null }) => {
+    const total = Number(r.quantity || 0) * Number(r.unit_price || 0);
+    if (total >= 20_000) {
+      const withholding = Number(r.withholding_amount ?? 0) || (total / 1.15) * 0.03;
+      return total - withholding;
+    }
+    return total;
+  };
   const costFromRestocks = (restocks || []).reduce(
-    (sum, r) => sum + Number(r.quantity || 0) * Number(r.unit_price || 0),
+    (sum, r) => sum + getRestockNetAmount(r),
     0
   );
   const costFromCosts = (costs || []).reduce((sum, c) => sum + Number(c.amount || 0), 0);
   const totalCost = costFromRestocks + costFromCosts;
   const profit = revenue - totalCost;
-  const openingCapital = 94_243.39;
-  const balance = openingCapital + profit;
+  const openingCapital = 141_932.96;
+  const openingInventoryValue = 0; // Value of products in stock when you started (ETB)
+  const balance = openingCapital + openingInventoryValue + profit;
 
   // Chart data - last 14 days
   const last14Days = Array.from({ length: 14 }, (_, i) => {
@@ -61,7 +77,7 @@ export default async function DashboardPage() {
     const daySales = completedSales.filter((s) => s.sale_date === date);
     return {
       date: format(new Date(date), "MMM d"),
-      revenue: daySales.reduce((s, x) => s + Number(x.total_amount || 0), 0),
+      revenue: daySales.reduce((s, x) => s + getNetAmount(x), 0),
       sales: daySales.length,
     };
   });
@@ -103,6 +119,7 @@ export default async function DashboardPage() {
         totalCost={totalCost}
         profit={profit}
         balance={balance}
+        openingInventoryValue={openingInventoryValue}
         salesCount={completedSales.length}
       />
 

@@ -59,6 +59,8 @@ export interface ProviderPrice {
   provider_id: string;
   product_id: string;
   price: number;
+  bulk_price?: number | null;
+  bulk_min_quantity?: number | null;
   created_at: string;
 }
 
@@ -124,6 +126,7 @@ export interface Restock {
   is_paid: boolean;
   receipt_received: boolean;
   withholding_issued: boolean;
+  withholding_amount?: number | null;
   credit_due_date: string | null;
   notes: string | null;
   created_by: string | null;

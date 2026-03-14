@@ -36,7 +36,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Receipt, Filter } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Plus, Receipt, MoreHorizontal, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 
@@ -67,6 +73,8 @@ export function SalesClient({
   const [sales, setSales] = useState(initialSales as Record<string, unknown>[]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [deleteSaleOpen, setDeleteSaleOpen] = useState(false);
+  const [saleToDelete, setSaleToDelete] = useState<Record<string, unknown> | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<string>(preselectedOrderId || "");
   const [filterPaid, setFilterPaid] = useState<"all" | "yes" | "no">("all");
   const [filterReceipt, setFilterReceipt] = useState<"all" | "yes" | "no">("all");
@@ -86,6 +94,10 @@ export function SalesClient({
   const customer = order ? customers.find((c) => c.id === order.customer_id) : null;
   const items = order?.order_items || [];
   const totalAmount = items.reduce((s, i) => s + i.quantity * i.unit_price, 0);
+  const withholdingThreshold = 20_000;
+  const baseForWithholding = totalAmount >= withholdingThreshold ? totalAmount / 1.15 : 0;
+  const withholdingAmount = baseForWithholding > 0 ? baseForWithholding * 0.03 : 0;
+  const amountReceived = totalAmount >= withholdingThreshold ? totalAmount - withholdingAmount : totalAmount;
   const isCredit = customer?.payment_type === "credit";
   const creditDays = customer?.credit_days || 0;
   const creditDueDate = isCredit
@@ -110,6 +122,7 @@ export function SalesClient({
           customer_id: order.customer_id,
           sale_date: format(new Date(), "yyyy-MM-dd"),
           total_amount: totalAmount,
+          withholding_amount: totalAmount >= withholdingThreshold ? withholdingAmount : null,
           is_paid: !isCredit,
           receipt_given: false,
           withholding_received: false,
@@ -139,6 +152,52 @@ export function SalesClient({
     }
   };
 
+  const handleDeleteSale = async () => {
+    if (!saleToDelete) return;
+    setLoading(true);
+    try {
+      const saleId = saleToDelete.id as string;
+      const items = (saleToDelete.sale_items as { product_id: string; quantity: number }[]) || [];
+      if (items.length === 0) {
+        const { data } = await supabase
+          .from("sale_items")
+          .select("product_id, quantity")
+          .eq("sale_id", saleId);
+        items.push(...(data || []));
+      }
+      const qtyByProduct = items.reduce(
+        (acc, it) => {
+          acc[it.product_id] = (acc[it.product_id] || 0) + Number(it.quantity);
+          return acc;
+        },
+        {} as Record<string, number>
+      );
+      const productIds = Object.keys(qtyByProduct);
+      if (productIds.length > 0) {
+        const { data: prods } = await supabase
+          .from("products")
+          .select("id, quantity")
+          .in("id", productIds);
+        for (const p of prods || []) {
+          const addQty = qtyByProduct[p.id] || 0;
+          const newQty = Math.max(0, Number(p.quantity ?? 0) + addQty);
+          await supabase.from("products").update({ quantity: newQty }).eq("id", p.id);
+        }
+      }
+      const { error } = await supabase.from("sales").delete().eq("id", saleId);
+      if (error) throw error;
+      setSales((prev) => prev.filter((x) => (x as { id: string }).id !== saleId));
+      setDeleteSaleOpen(false);
+      setSaleToDelete(null);
+      toast.success("Sale deleted");
+      window.location.reload();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete sale");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleTaskUpdate = async (
     saleId: string,
     field: "is_paid" | "receipt_given" | "withholding_received",
@@ -151,9 +210,7 @@ export function SalesClient({
         (field === "is_paid" ? value : (s?.is_paid as boolean)) &&
         (field === "receipt_given" ? value : (s?.receipt_given as boolean)) &&
         (field === "withholding_received" ? value : (s?.withholding_received as boolean));
-      if (allDone) {
-        updates.completed_at = new Date().toISOString();
-      }
+      updates.completed_at = allDone ? new Date().toISOString() : null;
       const { error } = await supabase.from("sales").update(updates).eq("id", saleId);
       if (error) throw error;
       setSales((prev) =>
@@ -230,9 +287,18 @@ export function SalesClient({
                   <p className="font-medium">{(Array.isArray(order.customer) ? order.customer[0] : order.customer)?.name}</p>
                   <p className="text-sm text-muted-foreground">
                     Total: ETB {totalAmount.toFixed(2)}
+                    {totalAmount >= withholdingThreshold && (
+                      <>
+                        {" | "}Withholding (3% of base): ETB {withholdingAmount.toFixed(2)}
+                        {" → "}Amount received: ETB {amountReceived.toFixed(2)}
+                      </>
+                    )}
                     {isCredit && ` | Credit: ${creditDays} days (due ${creditDueDate})`}
                   </p>
                   <p className="text-xs text-muted-foreground">
+                    {totalAmount >= withholdingThreshold
+                      ? "Sales ≥ ETB 20,000 have 3% withholding tax (base = total ÷ 1.15)."
+                      : ""}{" "}
                     After recording: complete tasks (paid, receipt, withholding) to mark sale as
                     complete.
                   </p>
@@ -244,6 +310,28 @@ export function SalesClient({
                 </Button>
               </DialogFooter>
             </div>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={deleteSaleOpen} onOpenChange={setDeleteSaleOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete sale</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete this sale? This will restore the sold items to inventory and cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteSaleOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDeleteSale}
+                disabled={loading}
+              >
+                {loading ? "Deleting..." : "Delete"}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
@@ -305,6 +393,7 @@ export function SalesClient({
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>#</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead>Customer</TableHead>
                 <TableHead>Amount</TableHead>
@@ -312,19 +401,28 @@ export function SalesClient({
                 <TableHead>Receipt</TableHead>
                 <TableHead>Withholding</TableHead>
                 <TableHead>Complete</TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredSales.map((s) => {
+              {filteredSales.map((s, index) => {
                 const sale = s as Record<string, unknown>;
                 const id = sale.id as string;
                 return (
                   <TableRow key={id}>
+                    <TableCell className="text-muted-foreground">{index + 1}</TableCell>
                     <TableCell>{format(new Date(sale.sale_date as string), "MMM d, yyyy")}</TableCell>
                     <TableCell>
                       {(Array.isArray(sale.customer) ? (sale.customer as { name?: string }[])[0] : sale.customer as { name?: string })?.name || "—"}
                     </TableCell>
-                    <TableCell>ETB {Number(sale.total_amount).toFixed(2)}</TableCell>
+                    <TableCell>
+                      ETB {Number(sale.total_amount).toFixed(2)}
+                      {Number(sale.withholding_amount ?? 0) > 0 ? (
+                        <span className="block text-xs text-muted-foreground">
+                          Net: ETB {(Number(sale.total_amount) - Number(sale.withholding_amount)).toFixed(2)}
+                        </span>
+                      ) : null}
+                    </TableCell>
                     <TableCell>
                       <Checkbox
                         checked={!!sale.is_paid}
@@ -355,6 +453,27 @@ export function SalesClient({
                       ) : (
                         <Badge variant="outline">Pending</Badge>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onSelect={() => {
+                              setSaleToDelete(sale);
+                              setTimeout(() => setDeleteSaleOpen(true), 0);
+                            }}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 );

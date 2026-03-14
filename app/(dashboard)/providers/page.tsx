@@ -14,11 +14,11 @@ export default async function ProvidersPage() {
 
   const { data: providerPrices } = await supabase
     .from("provider_prices")
-    .select("*, product:products(id, name)");
+    .select("*, product:products(id, name, unit)");
 
   const { data: products } = await supabase
     .from("products")
-    .select("id, name")
+    .select("id, name, unit")
     .order("name");
 
   return (

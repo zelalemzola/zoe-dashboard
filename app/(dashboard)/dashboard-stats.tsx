@@ -9,6 +9,7 @@ interface DashboardStatsProps {
   profit: number;
   balance: number;
   salesCount?: number;
+  openingInventoryValue?: number;
 }
 
 export function DashboardStats({
@@ -17,6 +18,7 @@ export function DashboardStats({
   profit,
   balance,
   salesCount = 0,
+  openingInventoryValue = 0,
 }: DashboardStatsProps) {
   const stats = [
     {
@@ -44,7 +46,9 @@ export function DashboardStats({
       title: "Balance",
       value: balance,
       icon: Wallet,
-      description: "Current balance",
+      description: openingInventoryValue > 0
+        ? "Capital + opening inventory + profit"
+        : "Current balance",
       trend: balance >= 0 ? ("up" as const) : ("down" as const),
     },
   ];

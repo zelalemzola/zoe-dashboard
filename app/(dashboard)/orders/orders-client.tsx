@@ -37,7 +37,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, ShoppingCart, Trash2 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Plus, ShoppingCart, Trash2, MoreHorizontal, Pencil } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 
@@ -73,7 +79,10 @@ export function OrdersClient({
 }) {
   const [orders, setOrders] = useState(initialOrders);
   const [open, setOpen] = useState(false);
+  const [editingOrder, setEditingOrder] = useState<OrderWithDetails | null>(null);
   const [loading, setLoading] = useState(false);
+  const [deleteOrderOpen, setDeleteOrderOpen] = useState(false);
+  const [orderToDelete, setOrderToDelete] = useState<OrderWithDetails | null>(null);
   const [form, setForm] = useState({
     customer_id: "",
     delivery_date: format(new Date(), "yyyy-MM-dd"),
@@ -146,6 +155,34 @@ export function OrdersClient({
     0
   );
 
+  const resetForm = () => {
+    setForm({
+      customer_id: "",
+      delivery_date: format(new Date(), "yyyy-MM-dd"),
+      payment_type: "",
+      credit_days: 0,
+      items: [],
+    });
+    setEditingOrder(null);
+  };
+
+  const handleOpenEdit = (order: OrderWithDetails) => {
+    setEditingOrder(order);
+    const items = order.order_items || [];
+    setForm({
+      customer_id: order.customer_id,
+      delivery_date: order.delivery_date,
+      payment_type: (order.payment_type as "on_delivery" | "credit") || "on_delivery",
+      credit_days: order.credit_days || 0,
+      items: items.map((i) => ({
+        product_id: i.product_id,
+        quantity: i.quantity,
+        unit_price: i.unit_price,
+      })),
+    });
+    setOpen(true);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.customer_id || form.items.length === 0) {
@@ -154,41 +191,118 @@ export function OrdersClient({
     }
     setLoading(true);
     try {
-      const { data: order, error: orderErr } = await supabase
-        .from("orders")
-        .insert({
-          customer_id: form.customer_id,
-          delivery_date: form.delivery_date,
-          payment_type: form.payment_type || "on_delivery",
-          credit_days: form.credit_days,
-          status: "pending",
-          created_by: currentUserId,
-        })
-        .select()
-        .single();
-      if (orderErr) throw orderErr;
-      for (const it of form.items) {
-        const { error: itemErr } = await supabase.from("order_items").insert({
-          order_id: order.id,
-          product_id: it.product_id,
-          quantity: it.quantity,
-          unit_price: it.unit_price,
-        });
-        if (itemErr) throw itemErr;
+      if (editingOrder) {
+        const { error: orderErr } = await supabase
+          .from("orders")
+          .update({
+            customer_id: form.customer_id,
+            delivery_date: form.delivery_date,
+            payment_type: form.payment_type || "on_delivery",
+            credit_days: form.credit_days,
+          })
+          .eq("id", editingOrder.id);
+        if (orderErr) throw orderErr;
+        const { error: deleteErr } = await supabase
+          .from("order_items")
+          .delete()
+          .eq("order_id", editingOrder.id);
+        if (deleteErr) throw deleteErr;
+        for (const it of form.items) {
+          const { error: itemErr } = await supabase.from("order_items").insert({
+            order_id: editingOrder.id,
+            product_id: it.product_id,
+            quantity: it.quantity,
+            unit_price: it.unit_price,
+          });
+          if (itemErr) throw itemErr;
+        }
+        const { data: updatedOrder, error: fetchErr } = await supabase
+          .from("orders")
+          .select(`
+            *,
+            customer:customers(id, name),
+            order_items(*, product:products(id, name))
+          `)
+          .eq("id", editingOrder.id)
+          .single();
+        if (fetchErr) throw fetchErr;
+        setOrders((prev) =>
+          prev.map((o) => (o.id === editingOrder.id ? updatedOrder : o))
+        );
+        setOpen(false);
+        resetForm();
+        toast.success("Order updated");
+      } else {
+        const { data: order, error: orderErr } = await supabase
+          .from("orders")
+          .insert({
+            customer_id: form.customer_id,
+            delivery_date: form.delivery_date,
+            payment_type: form.payment_type || "on_delivery",
+            credit_days: form.credit_days,
+            status: "pending",
+            created_by: currentUserId,
+          })
+          .select()
+          .single();
+        if (orderErr) throw orderErr;
+        for (const it of form.items) {
+          const { error: itemErr } = await supabase.from("order_items").insert({
+            order_id: order.id,
+            product_id: it.product_id,
+            quantity: it.quantity,
+            unit_price: it.unit_price,
+          });
+          if (itemErr) throw itemErr;
+        }
+        const { data: fullOrder, error: fetchErr } = await supabase
+          .from("orders")
+          .select(`
+            *,
+            customer:customers(id, name),
+            order_items(*, product:products(id, name))
+          `)
+          .eq("id", order.id)
+          .single();
+        if (fetchErr) throw fetchErr;
+        setOrders((prev) => [fullOrder, ...prev]);
+        setOpen(false);
+        resetForm();
+        toast.success("Order created");
       }
-      setOrders((prev) => [order, ...prev]);
-      setOpen(false);
-      setForm({
-        customer_id: "",
-        delivery_date: format(new Date(), "yyyy-MM-dd"),
-        payment_type: "",
-        credit_days: 0,
-        items: [],
-      });
-      toast.success("Order created");
-      window.location.reload();
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to create order");
+      toast.error(err instanceof Error ? err.message : "Failed to save order");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteOrder = async () => {
+    if (!orderToDelete) return;
+    setLoading(true);
+    try {
+      const { data: existingSale } = await supabase
+        .from("sales")
+        .select("id")
+        .eq("order_id", orderToDelete.id)
+        .limit(1)
+        .single();
+      if (existingSale) {
+        toast.error("Cannot delete: order has been sold. Delete the sale first.");
+        setLoading(false);
+        return;
+      }
+      const { error } = await supabase
+        .from("orders")
+        .delete()
+        .eq("id", orderToDelete.id);
+      if (error) throw error;
+      setOrders((prev) => prev.filter((o) => o.id !== orderToDelete.id));
+      setDeleteOrderOpen(false);
+      setOrderToDelete(null);
+      toast.success("Order deleted");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete order");
     } finally {
       setLoading(false);
     }
@@ -220,18 +334,26 @@ export function OrdersClient({
   return (
     <div className="space-y-6">
       <div className="flex justify-end">
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog
+          open={open}
+          onOpenChange={(o) => {
+            if (!o) resetForm();
+            setOpen(o);
+          }}
+        >
           <DialogTrigger asChild>
-            <Button>
+            <Button onClick={() => setEditingOrder(null)}>
               <Plus className="mr-2 h-4 w-4" />
               Create Order
             </Button>
           </DialogTrigger>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Create Order</DialogTitle>
+              <DialogTitle>{editingOrder ? "Edit Order" : "Create Order"}</DialogTitle>
               <DialogDescription>
-                Select customer, add products, set delivery date. Prices are pre-filled from customer pricing.
+                {editingOrder
+                  ? "Update the order details below."
+                  : "Select customer, add products, set delivery date. Prices are pre-filled from customer pricing."}
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -368,10 +490,32 @@ export function OrdersClient({
               </div>
               <DialogFooter>
                 <Button type="submit" disabled={loading || form.items.length === 0}>
-                  {loading ? "Creating..." : "Create order"}
+                  {loading ? "Saving..." : editingOrder ? "Update order" : "Create order"}
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={deleteOrderOpen} onOpenChange={setDeleteOrderOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete order</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete this order? This cannot be undone. Orders that have been sold cannot be deleted.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteOrderOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDeleteOrder}
+                disabled={loading}
+              >
+                {loading ? "Deleting..." : "Delete"}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
@@ -387,6 +531,7 @@ export function OrdersClient({
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>#</TableHead>
                 <TableHead>Customer</TableHead>
                 <TableHead>Delivery date</TableHead>
                 <TableHead>Status</TableHead>
@@ -396,7 +541,7 @@ export function OrdersClient({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {orders.map((o) => {
+              {orders.map((o, index) => {
                 const items = o.order_items || [];
                 const total = items.reduce(
                   (s, i) => s + i.quantity * i.unit_price,
@@ -404,6 +549,7 @@ export function OrdersClient({
                 );
                 return (
                   <TableRow key={o.id}>
+                    <TableCell className="text-muted-foreground">{index + 1}</TableCell>
                     <TableCell className="font-medium">
                       {(o.customer as { name?: string })?.name || "—"}
                     </TableCell>
@@ -429,13 +575,35 @@ export function OrdersClient({
                     </TableCell>
                     <TableCell>ETB {total.toFixed(2)}</TableCell>
                     <TableCell>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        asChild
-                      >
-                        <a href={`/sales?order=${o.id}`}>Record sale</a>
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleOpenEdit(o)}>
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem asChild>
+                            <a href={`/sales?order=${o.id}`}>
+                              <ShoppingCart className="mr-2 h-4 w-4" />
+                              Record sale
+                            </a>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onSelect={() => {
+                              setOrderToDelete(o);
+                              setTimeout(() => setDeleteOrderOpen(true), 0);
+                            }}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 );
