@@ -49,7 +49,8 @@ export default async function DashboardPage() {
   const costFromCosts = (costs || []).reduce((sum, c) => sum + Number(c.amount || 0), 0);
   const totalCost = costFromRestocks + costFromCosts;
   const profit = revenue - totalCost;
-  const balance = profit;
+  const openingCapital = 94_243.39;
+  const balance = openingCapital + profit;
 
   // Chart data - last 14 days
   const last14Days = Array.from({ length: 14 }, (_, i) => {

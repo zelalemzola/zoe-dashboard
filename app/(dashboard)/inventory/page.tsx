@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { InventoryClient } from "./inventory-client";
 import { redirect } from "next/navigation";
+import { AlertBanner } from "@/components/alert-banner";
 
 export default async function InventoryPage() {
   const supabase = await createClient();
@@ -27,6 +28,8 @@ export default async function InventoryPage() {
     .select("id, name, payment_type, credit_days")
     .order("name");
 
+  const lowStockProducts = (products || []).filter((p) => Number(p.quantity || 0) < 10);
+
   return (
     <div className="space-y-6">
       <div>
@@ -35,6 +38,13 @@ export default async function InventoryPage() {
           Manage product stock and restocking history
         </p>
       </div>
+      {lowStockProducts.length > 0 && (
+        <AlertBanner
+          message={`${lowStockProducts.length} product(s) running low on stock`}
+          href="/inventory"
+          variant="warning"
+        />
+      )}
       <InventoryClient
         products={products || []}
         restocks={restocks || []}

@@ -29,8 +29,6 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
-import { ModeToggle } from "./ModeToggle";
-
 const adminNavItems = [
   { title: "Dashboard", href: "/", icon: LayoutDashboard },
   { title: "Leads", href: "/leads", icon: MapPin },
@@ -100,8 +98,7 @@ export function AppSidebar({ isAdmin = false }: { isAdmin?: boolean }) {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="border-t border-sidebar-border flex flex-col items-left gap-3" >
-        <ModeToggle />
+      <SidebarFooter className="border-t border-sidebar-border">
         <div className="p-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
           Zoe Coffee © {new Date().getFullYear()}
         </div>

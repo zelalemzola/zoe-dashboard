@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { LeadsClient } from "./leads-client";
+import { AlertBanner } from "@/components/alert-banner";
 
 export default async function LeadsPage() {
   const supabase = await createClient();
@@ -25,6 +26,13 @@ export default async function LeadsPage() {
           Report cafés from outreach. Track status and set follow-up reminders.
         </p>
       </div>
+      {dueForFollowUp.length > 0 && (
+        <AlertBanner
+          message={`${dueForFollowUp.length} lead(s) due for follow-up today or overdue`}
+          href="/leads"
+          variant="warning"
+        />
+      )}
       <LeadsClient
         leads={leads || []}
         currentUserId={user.id}

@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { OrdersClient } from "./orders-client";
 import { redirect } from "next/navigation";
+import { AlertBanner } from "@/components/alert-banner";
 
 export default async function OrdersPage() {
   const supabase = await createClient();
@@ -30,6 +31,10 @@ export default async function OrdersPage() {
     .from("customer_prices")
     .select("customer_id, product_id, price");
 
+  const pendingOrders = (orders || []).filter(
+    (o) => o.status === "pending" || o.status === "processing"
+  );
+
   return (
     <div className="space-y-6">
       <div>
@@ -38,6 +43,13 @@ export default async function OrdersPage() {
           Manage customer orders and delivery schedules
         </p>
       </div>
+      {pendingOrders.length > 0 && (
+        <AlertBanner
+          message={`${pendingOrders.length} order(s) pending or in progress`}
+          href="/orders"
+          variant="info"
+        />
+      )}
       <OrdersClient
         orders={orders || []}
         customers={customers || []}

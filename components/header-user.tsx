@@ -14,12 +14,16 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { LogOut, User } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { NotificationCenter } from "@/components/notification-center";
+import { ModeToggle } from "@/components/ModeToggle";
+import type { NotificationSummary } from "@/lib/notifications";
 
 interface HeaderUserProps {
   user: { email?: string; user_metadata?: { full_name?: string } };
+  notifications: NotificationSummary;
 }
 
-export function HeaderUser({ user }: HeaderUserProps) {
+export function HeaderUser({ user, notifications }: HeaderUserProps) {
   const router = useRouter();
   const supabase = createClient();
 
@@ -40,6 +44,10 @@ export function HeaderUser({ user }: HeaderUserProps) {
     <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">
       <SidebarTrigger />
       <div className="flex flex-1" />
+      <div className="flex items-center gap-3">
+        <NotificationCenter notifications={notifications} />
+        <ModeToggle />
+      </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" className="relative h-9 w-9 rounded-full">
