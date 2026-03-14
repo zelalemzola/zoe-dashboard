@@ -30,7 +30,7 @@ export default async function UsersPage() {
           Create users and assign roles (admin or sales)
         </p>
       </div>
-      <UsersClient users={profiles || []} />
+      <UsersClient users={profiles || []} currentUserId={user.id} />
     </div>
   );
 }

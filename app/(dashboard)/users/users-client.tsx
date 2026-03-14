@@ -37,7 +37,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Users, Shield, UserCircle } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Plus, Users, Shield, UserCircle, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 
@@ -49,9 +55,18 @@ interface User {
   created_at: string;
 }
 
-export function UsersClient({ users: initialUsers }: { users: User[] }) {
+export function UsersClient({
+  users: initialUsers,
+  currentUserId,
+}: {
+  users: User[];
+  currentUserId?: string;
+}) {
   const [users, setUsers] = useState(initialUsers);
   const [open, setOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     email: "",
@@ -60,23 +75,79 @@ export function UsersClient({ users: initialUsers }: { users: User[] }) {
     role: "sales" as "admin" | "sales",
   });
 
+  const resetForm = () => {
+    setForm({ email: "", password: "", fullName: "", role: "sales" });
+    setEditingUser(null);
+  };
+
+  const handleOpenEdit = (user: User) => {
+    setEditingUser(user);
+    setForm({
+      email: user.email || "",
+      password: "",
+      fullName: user.full_name || "",
+      role: user.role as "admin" | "sales",
+    });
+    setOpen(true);
+  };
+
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await fetch("/api/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+      if (editingUser) {
+        const res = await fetch(`/api/users/${editingUser.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fullName: form.fullName, role: form.role }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to update user");
+        setUsers((prev) =>
+          prev.map((u) =>
+            u.id === editingUser.id
+              ? { ...u, full_name: form.fullName, role: form.role }
+              : u
+          )
+        );
+        setOpen(false);
+        resetForm();
+        toast.success("User updated");
+      } else {
+        const res = await fetch("/api/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(form),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to create user");
+        setUsers((prev) => [data.user, ...prev]);
+        setOpen(false);
+        resetForm();
+        toast.success("User created successfully");
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to save user");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!userToDelete) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/users/${userToDelete.id}`, {
+        method: "DELETE",
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to create user");
-      setUsers((prev) => [data.user, ...prev]);
-      setOpen(false);
-      setForm({ email: "", password: "", fullName: "", role: "sales" });
-      toast.success("User created successfully");
+      if (!res.ok) throw new Error(data.error || "Failed to delete user");
+      setUsers((prev) => prev.filter((u) => u.id !== userToDelete.id));
+      setDeleteOpen(false);
+      setUserToDelete(null);
+      toast.success("User deleted");
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to create user");
+      toast.error(err instanceof Error ? err.message : "Failed to delete user");
     } finally {
       setLoading(false);
     }
@@ -84,12 +155,13 @@ export function UsersClient({ users: initialUsers }: { users: User[] }) {
 
   const handleRoleChange = async (userId: string, newRole: "admin" | "sales") => {
     try {
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("profiles")
-        .update({ role: newRole })
-        .eq("id", userId);
-      if (error) throw error;
+      const res = await fetch(`/api/users/${userId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: newRole }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update");
       setUsers((prev) =>
         prev.map((u) => (u.id === userId ? { ...u, role: newRole } : u))
       );
@@ -110,18 +182,26 @@ export function UsersClient({ users: initialUsers }: { users: User[] }) {
             </CardTitle>
             <CardDescription>Manage team members and their roles</CardDescription>
           </div>
-          <Dialog open={open} onOpenChange={setOpen}>
+          <Dialog
+            open={open}
+            onOpenChange={(o) => {
+              if (!o) resetForm();
+              setOpen(o);
+            }}
+          >
             <DialogTrigger asChild>
-              <Button>
+              <Button onClick={() => setEditingUser(null)}>
                 <Plus className="mr-2 h-4 w-4" />
                 Create User
               </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Create User</DialogTitle>
+                <DialogTitle>{editingUser ? "Edit User" : "Create User"}</DialogTitle>
                 <DialogDescription>
-                  Add a new team member. They will receive login access with the assigned role.
+                  {editingUser
+                    ? "Update the user details below."
+                    : "Add a new team member. They will receive login access with the assigned role."}
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCreateUser} className="space-y-4">
@@ -133,27 +213,37 @@ export function UsersClient({ users: initialUsers }: { users: User[] }) {
                     placeholder="John Doe"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>Email</Label>
-                  <Input
-                    type="email"
-                    value={form.email}
-                    onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                    placeholder="user@company.com"
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Password</Label>
-                  <Input
-                    type="password"
-                    value={form.password}
-                    onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                    placeholder="Min 6 characters"
-                    required
-                    minLength={6}
-                  />
-                </div>
+                {!editingUser && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>Email</Label>
+                      <Input
+                        type="email"
+                        value={form.email}
+                        onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                        placeholder="user@company.com"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Password</Label>
+                      <Input
+                        type="password"
+                        value={form.password}
+                        onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                        placeholder="Min 6 characters"
+                        required
+                        minLength={6}
+                      />
+                    </div>
+                  </>
+                )}
+                {editingUser && (
+                  <div className="space-y-2">
+                    <Label>Email</Label>
+                    <Input value={form.email} disabled className="bg-muted" />
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label>Role</Label>
                   <Select
@@ -173,10 +263,29 @@ export function UsersClient({ users: initialUsers }: { users: User[] }) {
                 </div>
                 <DialogFooter>
                   <Button type="submit" disabled={loading}>
-                    {loading ? "Creating..." : "Create"}
+                    {loading ? "Saving..." : editingUser ? "Update" : "Create"}
                   </Button>
                 </DialogFooter>
               </form>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Delete user</DialogTitle>
+                <DialogDescription>
+                  Are you sure you want to delete {userToDelete?.full_name || userToDelete?.email}?
+                  This will remove their access permanently.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setDeleteOpen(false)}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" onClick={handleDelete} disabled={loading}>
+                  {loading ? "Deleting..." : "Delete"}
+                </Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
         </div>
@@ -215,18 +324,44 @@ export function UsersClient({ users: initialUsers }: { users: User[] }) {
                 </TableCell>
                 <TableCell>{format(new Date(u.created_at), "MMM d, yyyy")}</TableCell>
                 <TableCell>
-                  <Select
-                    value={u.role}
-                    onValueChange={(v) => handleRoleChange(u.id, v as "admin" | "sales")}
-                  >
-                    <SelectTrigger className="w-28 h-8">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="sales">Sales</SelectItem>
-                      <SelectItem value="admin">Admin</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={u.role}
+                      onValueChange={(v) => handleRoleChange(u.id, v as "admin" | "sales")}
+                    >
+                      <SelectTrigger className="w-28 h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="sales">Sales</SelectItem>
+                        <SelectItem value="admin">Admin</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon-sm">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleOpenEdit(u)}>
+                          <Pencil className="mr-2 h-4 w-4" />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setUserToDelete(u);
+                            setDeleteOpen(true);
+                          }}
+                          disabled={currentUserId === u.id}
+                          className="text-destructive"
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

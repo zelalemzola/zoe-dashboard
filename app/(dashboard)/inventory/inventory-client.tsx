@@ -38,7 +38,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Package, History, AlertTriangle } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Plus, Package, AlertTriangle, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import type { Product, Restock } from "@/lib/types/database";
@@ -58,6 +64,9 @@ export function InventoryClient({
 }: InventoryClientProps) {
   const [products, setProducts] = useState(initialProducts);
   const [openProduct, setOpenProduct] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const [openRestock, setOpenRestock] = useState(false);
   const [loading, setLoading] = useState(false);
   const [productForm, setProductForm] = useState({ name: "", unit: "kg" });
@@ -83,22 +92,74 @@ export function InventoryClient({
     return data?.price;
   };
 
+  const resetProductForm = () => {
+    setProductForm({ name: "", unit: "kg" });
+    setEditingProduct(null);
+  };
+
+  const handleOpenEditProduct = (product: Product) => {
+    setEditingProduct(product);
+    setProductForm({ name: product.name, unit: product.unit });
+    setOpenProduct(true);
+  };
+
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("products")
-        .insert({ name: productForm.name, unit: productForm.unit })
-        .select()
-        .single();
-      if (error) throw error;
-      setProducts((prev) => [...prev, data]);
-      setOpenProduct(false);
-      setProductForm({ name: "", unit: "kg" });
-      toast.success("Product added");
+      if (editingProduct) {
+        const { data, error } = await supabase
+          .from("products")
+          .update({ name: productForm.name, unit: productForm.unit })
+          .eq("id", editingProduct.id)
+          .select()
+          .single();
+        if (error) throw error;
+        setProducts((prev) =>
+          prev.map((p) => (p.id === editingProduct.id ? data : p))
+        );
+        setOpenProduct(false);
+        resetProductForm();
+        toast.success("Product updated");
+      } else {
+        const { data, error } = await supabase
+          .from("products")
+          .insert({ name: productForm.name, unit: productForm.unit })
+          .select()
+          .single();
+        if (error) throw error;
+        setProducts((prev) => [...prev, data]);
+        setOpenProduct(false);
+        resetProductForm();
+        toast.success("Product added");
+      }
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to add product");
+      toast.error(err instanceof Error ? err.message : "Failed to save product");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteProduct = async () => {
+    if (!productToDelete) return;
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from("products")
+        .delete()
+        .eq("id", productToDelete.id);
+      if (error) throw error;
+      setProducts((prev) => prev.filter((p) => p.id !== productToDelete.id));
+      setDeleteOpen(false);
+      setProductToDelete(null);
+      toast.success("Product deleted");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to delete";
+      if (typeof msg === "string" && msg.includes("foreign key")) {
+        toast.error("Cannot delete: product is used in orders or sales. Remove those first.");
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -183,17 +244,27 @@ export function InventoryClient({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-2">
-        <Dialog open={openProduct} onOpenChange={setOpenProduct}>
+        <Dialog
+          open={openProduct}
+          onOpenChange={(o) => {
+            if (!o) resetProductForm();
+            setOpenProduct(o);
+          }}
+        >
           <DialogTrigger asChild>
-            <Button variant="outline">
+            <Button variant="outline" onClick={() => setEditingProduct(null)}>
               <Plus className="mr-2 h-4 w-4" />
               Add Product
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Add Product</DialogTitle>
-              <DialogDescription>Register a new product for your inventory</DialogDescription>
+              <DialogTitle>{editingProduct ? "Edit Product" : "Add Product"}</DialogTitle>
+              <DialogDescription>
+                {editingProduct
+                  ? "Update the product details below."
+                  : "Register a new product for your inventory"}
+              </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleAddProduct} className="space-y-4">
               <div className="space-y-2">
@@ -227,10 +298,33 @@ export function InventoryClient({
               </div>
               <DialogFooter>
                 <Button type="submit" disabled={loading}>
-                  {loading ? "Adding..." : "Add"}
+                  {loading ? "Saving..." : editingProduct ? "Update" : "Add"}
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete product</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete {productToDelete?.name}? This cannot be undone.
+                Products used in orders or sales cannot be deleted.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDeleteProduct}
+                disabled={loading}
+              >
+                {loading ? "Deleting..." : "Delete"}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
         <Dialog open={openRestock} onOpenChange={setOpenRestock}>
@@ -377,6 +471,7 @@ export function InventoryClient({
                     <TableHead>Quantity</TableHead>
                     <TableHead>Unit</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="w-12">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -391,6 +486,31 @@ export function InventoryClient({
                         ) : (
                           <Badge variant="secondary">In stock</Badge>
                         )}
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon-sm">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => handleOpenEditProduct(p)}>
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setProductToDelete(p);
+                                setDeleteOpen(true);
+                              }}
+                              className="text-destructive"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   ))}

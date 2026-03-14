@@ -19,7 +19,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -49,6 +48,7 @@ import {
   Pencil,
   Trash2,
   CheckCircle2,
+  Eye,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -256,6 +256,10 @@ export function TasksClient({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={() => handleOpen(task)}>
+                      <Eye className="mr-2 h-4 w-4" />
+                      View
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleOpen(task)}>
                       <Pencil className="mr-2 h-4 w-4" />
                       Edit
                     </DropdownMenuItem>
@@ -288,14 +292,14 @@ export function TasksClient({
     <div className="space-y-4">
       {isAdmin && (
         <div className="flex justify-end">
-          <Dialog open={open} onOpenChange={(o) => { if (!o) resetForm(); setOpen(o); }}>
-            <DialogTrigger asChild>
-              <Button onClick={() => handleOpen()}>
-                <Plus className="mr-2 h-4 w-4" />
-                Create Task
-              </Button>
-            </DialogTrigger>
-          <DialogContent>
+          <Button onClick={() => handleOpen()}>
+            <Plus className="mr-2 h-4 w-4" />
+            Create Task
+          </Button>
+        </div>
+      )}
+      <Dialog open={open} onOpenChange={(o) => { if (!o) resetForm(); setOpen(o); }}>
+        <DialogContent>
             <DialogHeader>
               <DialogTitle>{editingTask ? "Edit Task" : "Create Task"}</DialogTitle>
               <DialogDescription>
@@ -398,10 +402,8 @@ export function TasksClient({
                 </Button>
               </DialogFooter>
             </form>
-          </DialogContent>
-        </Dialog>
-      </div>
-      )}
+        </DialogContent>
+      </Dialog>
       <Tabs defaultValue={isAdmin ? "all" : "mine"}>
         <TabsList>
           {isAdmin && (
