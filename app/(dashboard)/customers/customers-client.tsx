@@ -38,7 +38,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Users, DollarSign } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Plus, Users, DollarSign, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { Customer, CustomerPrice, Product } from "@/lib/types/database";
 
@@ -57,6 +63,9 @@ export function CustomersClient({
 }: CustomersClientProps) {
   const [customers, setCustomers] = useState(initialCustomers);
   const [open, setOpen] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
   const [priceOpen, setPriceOpen] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
@@ -78,22 +87,75 @@ export function CustomersClient({
   const getCustomerPrices = (customerId: string) =>
     customerPrices.filter((cp) => cp.customer_id === customerId);
 
+  const resetForm = () => {
+    setForm({ name: "", contact: "", address: "", payment_type: "on_delivery", credit_days: 0 });
+    setEditingCustomer(null);
+  };
+
+  const handleOpenEdit = (customer: Customer) => {
+    setEditingCustomer(customer);
+    setForm({
+      name: customer.name,
+      contact: customer.contact || "",
+      address: customer.address || "",
+      payment_type: customer.payment_type,
+      credit_days: customer.credit_days,
+    });
+    setOpen(true);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("customers")
-        .insert(form)
-        .select()
-        .single();
-      if (error) throw error;
-      setCustomers((prev) => [...prev, data]);
-      setOpen(false);
-      setForm({ name: "", contact: "", address: "", payment_type: "on_delivery", credit_days: 0 });
-      toast.success("Customer added");
+      if (editingCustomer) {
+        const { data, error } = await supabase
+          .from("customers")
+          .update(form)
+          .eq("id", editingCustomer.id)
+          .select()
+          .single();
+        if (error) throw error;
+        setCustomers((prev) => prev.map((c) => (c.id === editingCustomer.id ? data : c)));
+        setOpen(false);
+        resetForm();
+        toast.success("Customer updated");
+      } else {
+        const { data, error } = await supabase
+          .from("customers")
+          .insert(form)
+          .select()
+          .single();
+        if (error) throw error;
+        setCustomers((prev) => [...prev, data]);
+        setOpen(false);
+        resetForm();
+        toast.success("Customer added");
+      }
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to add customer");
+      toast.error(err instanceof Error ? err.message : "Failed to save customer");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!customerToDelete) return;
+    setLoading(true);
+    try {
+      const { error } = await supabase.from("customers").delete().eq("id", customerToDelete.id);
+      if (error) throw error;
+      setCustomers((prev) => prev.filter((c) => c.id !== customerToDelete.id));
+      setDeleteOpen(false);
+      setCustomerToDelete(null);
+      toast.success("Customer deleted");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to delete";
+      if (typeof msg === "string" && msg.includes("foreign key")) {
+        toast.error("Cannot delete: customer has orders or sales. Remove those first.");
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -126,19 +188,30 @@ export function CustomersClient({
 
   return (
     <div className="space-y-6">
+      <p className="text-sm text-muted-foreground">
+        Total customers: {customers.length}
+      </p>
       <div className="flex justify-end">
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog
+          open={open}
+          onOpenChange={(o) => {
+            if (!o) resetForm();
+            setOpen(o);
+          }}
+        >
           <DialogTrigger asChild>
-            <Button>
+            <Button onClick={() => setEditingCustomer(null)}>
               <Plus className="mr-2 h-4 w-4" />
               Add Customer
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Add Customer</DialogTitle>
+              <DialogTitle>{editingCustomer ? "Edit Customer" : "Add Customer"}</DialogTitle>
               <DialogDescription>
-                Register a new customer. Set payment type and credit days if they work on credit.
+                {editingCustomer
+                  ? "Update the customer details below."
+                  : "Register a new customer. Set payment type and credit days if they work on credit."}
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -199,10 +272,33 @@ export function CustomersClient({
               </div>
               <DialogFooter>
                 <Button type="submit" disabled={loading}>
-                  {loading ? "Adding..." : "Add"}
+                  {loading ? "Saving..." : editingCustomer ? "Update" : "Add"}
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete customer</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete {customerToDelete?.name}? This cannot be undone.
+                Customers with existing orders or sales cannot be deleted.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={loading}
+              >
+                {loading ? "Deleting..." : "Delete"}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
@@ -217,7 +313,8 @@ export function CustomersClient({
         <CardContent>
           <Table>
             <TableHeader>
-              <TableRow>
+              <TableRow className="bg-muted/50">
+                <TableHead>#</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>Contact</TableHead>
                 <TableHead>Payment</TableHead>
@@ -227,10 +324,11 @@ export function CustomersClient({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {customers.map((c) => {
+              {customers.map((c, index) => {
                 const prices = getCustomerPrices(c.id);
                 return (
                   <TableRow key={c.id}>
+                    <TableCell className="text-muted-foreground">{index + 1}</TableCell>
                     <TableCell className="font-medium">{c.name}</TableCell>
                     <TableCell>{c.contact || "—"}</TableCell>
                     <TableCell>
@@ -251,16 +349,37 @@ export function CustomersClient({
                       )}
                     </TableCell>
                     <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleOpenEdit(c)}>
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setPriceOpen(c.id)}>
+                            <DollarSign className="mr-2 h-4 w-4" />
+                            Prices
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setCustomerToDelete(c);
+                              setDeleteOpen(true);
+                            }}
+                            className="text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                       <Dialog
                         open={priceOpen === c.id}
                         onOpenChange={(o) => !o && setPriceOpen(null)}
                       >
-                        <DialogTrigger asChild>
-                          <Button variant="outline" size="sm" onClick={() => setPriceOpen(c.id)}>
-                            <DollarSign className="mr-1 h-4 w-4" />
-                            Prices
-                          </Button>
-                        </DialogTrigger>
                         <DialogContent>
                           <DialogHeader>
                             <DialogTitle>Custom prices for {c.name}</DialogTitle>
