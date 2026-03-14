@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Area,
@@ -9,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { ChartDateFilter } from "./chart-date-filter";
 
 interface ChartData {
   date: string;
@@ -16,12 +18,29 @@ interface ChartData {
   sales: number;
 }
 
-export function DashboardCharts({ data }: { data: ChartData[] }) {
+export function DashboardCharts({
+  data,
+  description,
+  filterMonth,
+  filterYear,
+}: {
+  data: ChartData[];
+  description: string;
+  filterMonth: number | null;
+  filterYear: number | null;
+}) {
   return (
     <Card className="border-0 shadow-lg shadow-primary/5">
       <CardHeader>
-        <CardTitle>Revenue trend</CardTitle>
-        <CardDescription>Last 14 days of completed sales</CardDescription>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <CardTitle>Revenue trend</CardTitle>
+            <CardDescription>{description} of completed sales</CardDescription>
+          </div>
+          <Suspense fallback={null}>
+            <ChartDateFilter month={filterMonth} year={filterYear} />
+          </Suspense>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="h-[280px] w-full">

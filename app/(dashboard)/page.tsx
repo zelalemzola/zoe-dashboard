@@ -1,11 +1,25 @@
 import { createClient } from "@/lib/supabase/server";
-import { format, subDays } from "date-fns";
+import { format, subDays, getDaysInMonth, startOfMonth, eachDayOfInterval } from "date-fns";
 import { DashboardStats } from "./dashboard-stats";
 import { DashboardCharts } from "./dashboard-charts";
 import { DashboardAlerts } from "./dashboard-alerts";
 import { DashboardRecent } from "./dashboard-recent";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ month?: string; year?: string }>;
+}) {
+  const params = await searchParams;
+  const monthParam = params.month ? parseInt(params.month, 10) : null;
+  const yearParam = params.year ? parseInt(params.year, 10) : null;
+  const useMonthFilter =
+    monthParam != null &&
+    monthParam >= 1 &&
+    monthParam <= 12 &&
+    yearParam != null &&
+    yearParam >= 2020 &&
+    yearParam <= 2100;
   const supabase = await createClient();
 
   // Sales - completed and paid only for revenue
@@ -68,12 +82,25 @@ export default async function DashboardPage() {
   const openingInventoryValue = 0; // Value of products in stock when you started (ETB)
   const balance = openingCapital + openingInventoryValue + profit;
 
-  // Chart data - last 14 days
-  const last14Days = Array.from({ length: 14 }, (_, i) => {
-    const d = subDays(new Date(), 13 - i);
-    return format(d, "yyyy-MM-dd");
-  });
-  const revenueByDay = last14Days.map((date) => {
+  // Chart data - last 30 days or selected month
+  let chartDates: string[];
+  let chartDescription: string;
+  if (useMonthFilter) {
+    const start = startOfMonth(new Date(yearParam!, monthParam! - 1));
+    const daysInMonth = getDaysInMonth(start);
+    chartDates = eachDayOfInterval({
+      start,
+      end: new Date(yearParam!, monthParam! - 1, daysInMonth),
+    }).map((d) => format(d, "yyyy-MM-dd"));
+    chartDescription = `${format(start, "MMMM yyyy")}`;
+  } else {
+    chartDates = Array.from({ length: 30 }, (_, i) => {
+      const d = subDays(new Date(), 29 - i);
+      return format(d, "yyyy-MM-dd");
+    });
+    chartDescription = "Last 30 days";
+  }
+  const revenueByDay = chartDates.map((date) => {
     const daySales = completedSales.filter((s) => s.sale_date === date);
     return {
       date: format(new Date(date), "MMM d"),
@@ -125,7 +152,12 @@ export default async function DashboardPage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <DashboardCharts data={revenueByDay} />
+          <DashboardCharts
+            data={revenueByDay}
+            description={chartDescription}
+            filterMonth={useMonthFilter ? monthParam : null}
+            filterYear={useMonthFilter ? yearParam : null}
+          />
         </div>
         <div>
           <DashboardRecent orders={orders || []} lowStock={lowStockProducts} />
