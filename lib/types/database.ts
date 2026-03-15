@@ -149,6 +149,13 @@ export interface Task {
   updated_at: string;
 }
 
+export interface TaskAssignee {
+  id: string;
+  task_id: string;
+  user_id: string;
+  created_at: string;
+}
+
 export type CostType = "recurring" | "one_time";
 export type RecurringFrequency = "daily" | "weekly" | "monthly" | "yearly";
 

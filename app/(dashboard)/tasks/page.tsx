@@ -10,7 +10,10 @@ export default async function TasksPage() {
 
   const { data: tasks } = await supabase
     .from("tasks")
-    .select("*")
+    .select(`
+      *,
+      task_assignees(user_id, assignee:profiles(id, full_name, email))
+    `)
     .order("created_at", { ascending: false });
 
   const { data: profile } = await supabase
@@ -28,10 +31,15 @@ export default async function TasksPage() {
   const dueSoonEnd = new Date();
   dueSoonEnd.setDate(dueSoonEnd.getDate() + 7);
   const dueSoonEndStr = dueSoonEnd.toISOString().slice(0, 10);
+  const isTaskAssignedToMe = (t: { assignee_id?: string | null; task_assignees?: { user_id: string }[] }) => {
+    if (t.assignee_id === user.id) return true;
+    const assignees = t.task_assignees as { user_id: string }[] | undefined;
+    return Array.isArray(assignees) && assignees.some((a) => a.user_id === user.id);
+  };
   const myTasksDueSoon = (tasks || []).filter((t) => {
     const d = t.deadline?.slice(0, 10);
     return (
-      t.assignee_id === user.id &&
+      isTaskAssignedToMe(t) &&
       t.status !== "done" &&
       d &&
       d >= today &&
@@ -41,7 +49,7 @@ export default async function TasksPage() {
   const myTasksOverdue = (tasks || []).filter((t) => {
     const d = t.deadline?.slice(0, 10);
     return (
-      t.assignee_id === user.id &&
+      isTaskAssignedToMe(t) &&
       t.status !== "done" &&
       d &&
       d < today

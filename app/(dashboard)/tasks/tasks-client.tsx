@@ -56,12 +56,20 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Checkbox } from "@/components/ui/checkbox";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import type { Task } from "@/lib/types/database";
+import { Users } from "lucide-react";
+
+type TaskAssigneeRow = {
+  user_id: string;
+  assignee?: { id: string; full_name: string | null; email: string | null };
+};
+type TaskWithAssignees = Task & { task_assignees?: TaskAssigneeRow[] };
 
 interface TasksClientProps {
-  tasks: Task[];
+  tasks: TaskWithAssignees[];
   profiles: { id: string; full_name: string | null; email: string | null }[];
   currentUserId: string;
   isAdmin?: boolean;
@@ -75,19 +83,32 @@ export function TasksClient({
 }: TasksClientProps) {
   const [tasks, setTasks] = useState(initialTasks);
   const [open, setOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editingTask, setEditingTask] = useState<TaskWithAssignees | null>(null);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     title: "",
     description: "",
-    assignee_id: "" as string | null,
+    assignee_ids: [] as string[],
     deadline: "",
     status: "todo" as "todo" | "in_progress" | "done",
     progress: 0,
   });
 
   const supabase = createClient();
-  const myTasks = tasks.filter((t) => t.assignee_id === currentUserId);
+
+  const getTaskAssigneeIds = (t: TaskWithAssignees): string[] => {
+    const rows = t.task_assignees as TaskAssigneeRow[] | undefined;
+    if (Array.isArray(rows) && rows.length > 0) {
+      return rows.map((a) => a.user_id);
+    }
+    if (t.assignee_id) return [t.assignee_id];
+    return [];
+  };
+
+  const myTasks = tasks.filter((t) => {
+    const ids = getTaskAssigneeIds(t);
+    return ids.includes(currentUserId);
+  });
 
   const getProfileName = (id: string | null) => {
     if (!id) return "Unassigned";
@@ -95,11 +116,21 @@ export function TasksClient({
     return p?.full_name || p?.email || "Unknown";
   };
 
+  const getAssigneesDisplay = (t: TaskWithAssignees): string => {
+    const ids = getTaskAssigneeIds(t);
+    if (ids.length === 0) return "Unassigned";
+    if (ids.length === 1) return getProfileName(ids[0]);
+    const names = ids.map((id) => getProfileName(id));
+    return `Group: ${names.join(", ")}`;
+  };
+
+  const isGroupTask = (t: TaskWithAssignees) => getTaskAssigneeIds(t).length > 1;
+
   const resetForm = () => {
     setForm({
       title: "",
       description: "",
-      assignee_id: null,
+      assignee_ids: [],
       deadline: "",
       status: "todo",
       progress: 0,
@@ -107,13 +138,13 @@ export function TasksClient({
     setEditingTask(null);
   };
 
-  const handleOpen = (task?: Task) => {
+  const handleOpen = (task?: TaskWithAssignees) => {
     if (task) {
       setEditingTask(task);
       setForm({
         title: task.title,
         description: task.description || "",
-        assignee_id: task.assignee_id,
+        assignee_ids: getTaskAssigneeIds(task),
         deadline: task.deadline ? task.deadline.slice(0, 16) : "",
         status: task.status,
         progress: task.progress,
@@ -124,14 +155,23 @@ export function TasksClient({
     setOpen(true);
   };
 
+  const toggleAssignee = (userId: string) => {
+    setForm((f) =>
+      f.assignee_ids.includes(userId)
+        ? { ...f, assignee_ids: f.assignee_ids.filter((id) => id !== userId) }
+        : { ...f, assignee_ids: [...f.assignee_ids, userId] }
+    );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
+      const firstAssignee = form.assignee_ids.length > 0 ? form.assignee_ids[0] : null;
       const payload = {
         title: form.title,
         description: form.description || null,
-        assignee_id: form.assignee_id || null,
+        assignee_id: firstAssignee,
         deadline: form.deadline ? new Date(form.deadline).toISOString() : null,
         status: form.status,
         progress: form.progress,
@@ -139,8 +179,24 @@ export function TasksClient({
       if (editingTask) {
         const { error } = await supabase.from("tasks").update(payload).eq("id", editingTask.id);
         if (error) throw error;
+        await supabase.from("task_assignees").delete().eq("task_id", editingTask.id);
+        if (form.assignee_ids.length > 0) {
+          await supabase.from("task_assignees").insert(
+            form.assignee_ids.map((user_id) => ({ task_id: editingTask.id, user_id }))
+          );
+        }
+        const updated: TaskWithAssignees = {
+          ...editingTask,
+          ...payload,
+          task_assignees: form.assignee_ids.map((user_id) => ({
+            user_id,
+            assignee: profiles.find((p) => p.id === user_id)
+              ? { id: user_id, full_name: profiles.find((p) => p.id === user_id)!.full_name, email: profiles.find((p) => p.id === user_id)!.email }
+              : undefined,
+          })),
+        };
         setTasks((prev) =>
-          prev.map((t) => (t.id === editingTask.id ? { ...t, ...payload } : t))
+          prev.map((t) => (t.id === editingTask.id ? updated : t))
         );
         toast.success("Task updated");
       } else {
@@ -151,7 +207,22 @@ export function TasksClient({
           .select()
           .single();
         if (error) throw error;
-        setTasks((prev) => [data, ...prev]);
+        const taskId = data.id;
+        if (form.assignee_ids.length > 0) {
+          await supabase.from("task_assignees").insert(
+            form.assignee_ids.map((user_id) => ({ task_id: taskId, user_id }))
+          );
+        }
+        const newTask: TaskWithAssignees = {
+          ...data,
+          task_assignees: form.assignee_ids.map((user_id) => ({
+            user_id,
+            assignee: profiles.find((p) => p.id === user_id)
+              ? { id: user_id, full_name: profiles.find((p) => p.id === user_id)!.full_name, email: profiles.find((p) => p.id === user_id)!.email }
+              : undefined,
+          })),
+        };
+        setTasks((prev) => [newTask, ...prev]);
         toast.success("Task created");
       }
       setOpen(false);
@@ -174,7 +245,7 @@ export function TasksClient({
     }
   };
 
-  const handleStatusChange = async (task: Task, status: "todo" | "in_progress" | "done") => {
+  const handleStatusChange = async (task: TaskWithAssignees, status: "todo" | "in_progress" | "done") => {
     const progress = status === "done" ? 100 : status === "in_progress" ? 50 : 0;
     try {
       const { error } = await supabase
@@ -221,7 +292,17 @@ export function TasksClient({
                   )}
                 </div>
               </TableCell>
-              <TableCell>{getProfileName(task.assignee_id)}</TableCell>
+              <TableCell>
+                <div className="flex flex-col gap-0.5">
+                  {isGroupTask(task) && (
+                    <Badge variant="secondary" className="w-fit text-xs">
+                      <Users className="mr-1 h-3 w-3" />
+                      Group task
+                    </Badge>
+                  )}
+                  <span>{getAssigneesDisplay(task)}</span>
+                </div>
+              </TableCell>
               <TableCell>
                 <Badge
                   variant="outline"
@@ -305,8 +386,24 @@ export function TasksClient({
               <DialogDescription>
                 {editingTask
                   ? "Update the task details below"
-                  : "Add a new task and assign it to a team member"}
+                  : "Add a new task. Select one or more people to create a group task."}
               </DialogDescription>
+              {editingTask && isGroupTask(editingTask) && (
+                <div className="rounded-lg border bg-muted/50 p-3 text-sm">
+                  <p className="font-medium flex items-center gap-1">
+                    <Users className="h-4 w-4" />
+                    Group task — you're working with:
+                  </p>
+                  <ul className="mt-1 list-disc list-inside text-muted-foreground">
+                    {getTaskAssigneeIds(editingTask).map((id) => (
+                      <li key={id}>
+                        {getProfileName(id)}
+                        {id === currentUserId && " (you)"}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
@@ -328,25 +425,34 @@ export function TasksClient({
                 />
               </div>
               <div className="space-y-2">
-                <Label>Assign to</Label>
-                <Select
-                  value={form.assignee_id || "none"}
-                  onValueChange={(v) =>
-                    setForm((f) => ({ ...f, assignee_id: v === "none" ? null : v }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select assignee" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Unassigned</SelectItem>
-                    {profiles.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.full_name || p.email || p.id}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>Assign to (select one or more for a group task)</Label>
+                <div className="rounded-lg border p-3 space-y-2 max-h-40 overflow-y-auto">
+                  {profiles.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No team members</p>
+                  ) : (
+                    profiles.map((p) => (
+                      <div key={p.id} className="flex items-center gap-2">
+                        <Checkbox
+                          id={`assignee-${p.id}`}
+                          checked={form.assignee_ids.includes(p.id)}
+                          onCheckedChange={() => toggleAssignee(p.id)}
+                        />
+                        <label
+                          htmlFor={`assignee-${p.id}`}
+                          className="text-sm font-medium leading-none cursor-pointer"
+                        >
+                          {p.full_name || p.email || p.id}
+                        </label>
+                      </div>
+                    ))
+                  )}
+                </div>
+                {form.assignee_ids.length > 1 && (
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Users className="h-3 w-3" />
+                    Group task: {form.assignee_ids.map((id) => getProfileName(id)).join(", ")}
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="deadline">Deadline</Label>
@@ -434,7 +540,7 @@ export function TasksClient({
           <Card>
             <CardHeader>
               <CardTitle>My Tasks</CardTitle>
-              <CardDescription>Tasks assigned to you</CardDescription>
+              <CardDescription>Tasks assigned to you (including group tasks you're part of)</CardDescription>
             </CardHeader>
             <CardContent>
               <TaskTable list={myTasks} />

@@ -110,26 +110,43 @@ export async function getNotificationSummary(
     });
   });
 
-  // Tasks assigned to user (not done)
-  const { data: myTasks } = await supabase
+  // Task IDs where user is assignee (via task_assignees or assignee_id)
+  const { data: assignedTaskRows } = await supabase
+    .from("task_assignees")
+    .select("task_id")
+    .eq("user_id", userId);
+  const assignedTaskIds = new Set((assignedTaskRows || []).map((r) => r.task_id));
+
+  // Tasks assigned to user (not done): in task_assignees or assignee_id
+  const { data: tasksByAssignee } = await supabase
     .from("tasks")
     .select("id, title, deadline, status")
     .eq("assignee_id", userId)
     .neq("status", "done");
+  let tasksNotDone: { id: string; title: string; deadline: string | null; status: string }[] = [];
+  if (assignedTaskIds.size > 0) {
+    const { data } = await supabase
+      .from("tasks")
+      .select("id, title, deadline, status")
+      .neq("status", "done")
+      .in("id", Array.from(assignedTaskIds));
+    tasksNotDone = data || [];
+  }
+  const myTasksMap = new Map<string, { id: string; title: string; deadline: string | null; status: string }>();
+  (tasksByAssignee || []).forEach((t) => myTasksMap.set(t.id, t));
+  tasksNotDone.forEach((t) => myTasksMap.set(t.id, t));
+  const myTasks = Array.from(myTasksMap.values());
 
   // Tasks due soon (subset: deadline in next 7 days)
-  const { data: tasksDueSoon } = await supabase
-    .from("tasks")
-    .select("id, title, deadline")
-    .eq("assignee_id", userId)
-    .neq("status", "done")
-    .not("deadline", "is", null)
-    .gte("deadline", today)
-    .lte("deadline", dueSoonEnd);
+  const tasksDueSoon = myTasks.filter(
+    (t) =>
+      t.deadline &&
+      t.deadline.slice(0, 10) >= today &&
+      t.deadline.slice(0, 10) <= dueSoonEnd
+  );
+  const dueSoonIds = new Set(tasksDueSoon.map((t) => t.id));
 
-  const dueSoonIds = new Set((tasksDueSoon || []).map((t) => t.id));
-
-  (myTasks || []).forEach((t) => {
+  myTasks.forEach((t) => {
     const deadline = t.deadline?.slice(0, 10);
     if (dueSoonIds.has(t.id) && deadline) {
       items.push({

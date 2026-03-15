@@ -14,7 +14,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { LogOut, User } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { NotificationCenter } from "@/components/notification-center";
+import { LiveNotificationCenter } from "@/components/live-notification-center";
 import { ModeToggle } from "@/components/ModeToggle";
 import type { NotificationSummary } from "@/lib/notifications";
 
@@ -45,7 +45,7 @@ export function HeaderUser({ user, notifications }: HeaderUserProps) {
       <SidebarTrigger />
       <div className="flex flex-1" />
       <div className="flex items-center gap-3">
-        <NotificationCenter notifications={notifications} />
+        <LiveNotificationCenter initialNotifications={notifications} />
         <ModeToggle />
       </div>
       <DropdownMenu>
